@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+
+# v0 runtime output — local flag log, not source data
+apps/prototype-cli/flagged_questions.jsonl
+
+# web/ (Vite) — build output + build artifact
+web/node_modules/
+web/dist/
+web/.env.local
+web/public/item_bank.json
+
+# api/ — local runtime output, never seeded/source data
+api/flagged_items.db
+api/.env
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,103 @@
+Read docs/PRD.md and docs/architecture.md first.
+
+I already have: item_bank/, apps/prototype-cli/retrieval.py, apps/prototype-cli/refusal.py.
+
+Do not modify those — treat them as the reference logic to port.
+
+Build a deployable web app for tonight, scoped exactly as follows:
+
+1. scripts/build_item_bank_json.py — converts item_bank/biology/*.jsonl into a single
+
+   web/public/item_bank.json, following item_bank/schema.json.
+
+2. web/ — a React + TypeScript app (Vite, not Next.js, for a lighter/faster build tonight):
+
+   - src/retrieval.ts and src/refusal.ts: TypeScript ports of the matching and refusal
+
+     logic in retrieval.py and refusal.py. Same behavior: fuzzy/keyword match against
+
+     item_bank.json, confidence score, refuse-and-flag if below threshold.
+
+   - A simple chat-style UI: text input, submit, shows the answer with a "VERIFIED"
+
+     or "AI-GENERATED — PENDING VERIFICATION" or "NO VERIFIED ANSWER — flagged" label.
+
+   - public/manifest.json configured as an installable PWA (name, icons, start_url,
+
+     display: standalone) so it can be added to the home screen on Android and iOS.
+
+   - A service worker that caches the app shell and item_bank.json so retrieval works
+
+     fully offline after the first page load.
+
+   - src/api.ts: calls the backend's /escalate endpoint ONLY when local retrieval
+
+     confidence is below threshold AND the browser reports it's online
+
+     (navigator.onLine). Handle the offline case by showing the refusal message
+
+     locally, no network call attempted.
+
+3. api/ — a FastAPI backend:
+
+   - main.py: single POST /escalate endpoint. Takes a question string, calls Gemini
+
+     via gemini_client.py, returns the answer labeled as AI-generated-pending-verification.
+
+     Also writes every escalated question + answer to a local SQLite table
+
+     (db.py) named flagged_items, so nothing is lost — this is the queue for
+
+     future human review per architecture.md.
+
+   - gemini_client.py: reads GEMINI_API_KEY from environment, calls the Gemini
+
+     Flash-Lite model, minimal system prompt: ground answers to NEET Biology,
+
+     say "I don't have a confident answer" rather than guessing if unsure.
+
+   - Dockerfile: single-stage, small image, runs with uvicorn, reads PORT from
+
+     environment (required for Cloud Run).
+
+   - requirements.txt: fastapi, uvicorn, google-generativeai (or the current
+
+     official Gemini Python SDK — check latest package name), python-dotenv.
+
+4. .env.example listing GEMINI_API_KEY.
+
+5. README.md with exact commands to:
+
+   - run web/ and api/ locally for testing
+
+   - build and deploy api/ to Cloud Run via gcloud (assume gcloud is already
+
+     authenticated and the project is already set)
+
+   - deploy web/ as a static site (Cloud Storage + Cloud Run, or Firebase Hosting —
+
+     pick whichever is fastest to stand up tonight, explain the choice)
+
+Do not add voice, diagrams, on-device LLMs, or native app wrapping — those are
+
+explicitly out of scope for tonight per docs/PRD.md's phased scope. Ask before
+
+adding any dependency not listed above.
+
+After scaffolding, run it locally, confirm the local retrieval path works with
+
+no backend running (simulate offline), then walk me through the exact gcloud
+
+commands to deploy api/ to Cloud Run so I can run them myself with my API key.
+
+Also include item_bank/chemistry/neet_chem_items.jsonl (I'll provide seed items)
+
+in the item bank build. Update scripts/build_item_bank_json.py to glob across
+
+BOTH item_bank/biology/*.jsonl and item_bank/chemistry/*.jsonl into the same
+
+web/public/item_bank.json, tagging each item's subject from its source folder.
+
+No changes needed to retrieval.ts/refusal.ts — confirm they're already
+
+subject-agnostic and just work once chemistry items are present.

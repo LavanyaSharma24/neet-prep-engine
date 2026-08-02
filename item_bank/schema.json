@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://neet-prep-engine/item_bank/schema.json",
+  "title": "Question Item",
+  "description": "One verified item in the offline item bank (v0: NEET Biology, English/Hindi, text-only).",
+  "type": "object",
+  "required": [
+    "id",
+    "question_text",
+    "answer_text",
+    "concept_tag",
+    "subconcept_tag",
+    "misconception_tags",
+    "difficulty",
+    "source",
+    "verified_by",
+    "exam_tier",
+    "language"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable unique identifier, e.g. 'bio-0001'.",
+      "pattern": "^[a-z]+-[0-9]{4,}$"
+    },
+    "question_text": {
+      "type": "string",
+      "description": "The full question as a student would see it."
+    },
+    "options": {
+      "type": "array",
+      "description": "Answer options, only present for MCQ items. Omit entirely for free-response items.",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "is_correct"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Option label, e.g. 'A', 'B', 'C', 'D'."
+          },
+          "text": {
+            "type": "string"
+          },
+          "is_correct": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "answer_text": {
+      "type": "string",
+      "description": "The verified, fully explained answer — what gets read back to the student."
+    },
+    "concept_tag": {
+      "type": "string",
+      "description": "Top-level concept, e.g. 'Cell Biology', 'Genetics and Evolution'."
+    },
+    "subconcept_tag": {
+      "type": "string",
+      "description": "Narrower topic within the concept, e.g. 'Cell Organelles'."
+    },
+    "misconception_tags": {
+      "type": "object",
+      "description": "Maps each wrong option's id to a misconception taxonomy tag. Empty object for non-MCQ items.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"]
+    },
+    "source": {
+      "type": "string",
+      "description": "Where this item came from, e.g. 'NCERT Class 11 Biology, Ch 8' or a PYQ citation."
+    },
+    "verified_by": {
+      "type": "string",
+      "description": "Reviewer identifier or process that verified this item (v0: seeded internally, no review pipeline yet)."
+    },
+    "exam_tier": {
+      "type": "string",
+      "enum": ["NEET"],
+      "description": "Only NEET is in scope for v0. JEE Main/Advanced come later per docs/PRD.md phased scope."
+    },
+    "language": {
+      "type": "string",
+      "enum": ["en", "hi"],
+      "description": "v0 is text-only English/Hindi. Hinglish and voice come in v1."
+    }
+  }
+}

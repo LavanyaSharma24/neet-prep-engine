@@ -1,0 +1,10 @@
+{
+  "description": "NEET misconception taxonomy. Each entry is a canonical misconception referenced by tag from item_bank misconception_tags fields.",
+  "entry_shape": {
+    "tag": "short-kebab-case-slug, referenced from item_bank misconception_tags values",
+    "concept_tag": "which concept this misconception belongs to",
+    "description": "plain-language explanation of the misunderstanding",
+    "related_item_ids": "array of item ids where this misconception shows up as a wrong-option tag"
+  },
+  "entries": []
+}

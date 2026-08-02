@@ -1,0 +1,8 @@
+# v0 prototype has zero third-party dependencies.
+# Matching (difflib), tests (unittest), JSON/JSONL handling, and paths
+# (pathlib) all come from the Python standard library (3.9+).
+#
+# Nothing to install. This file exists so the "no dependencies" fact is
+# explicit and future additions get reviewed here, not just pip-installed
+# ad hoc. Anything added below must be discussed first — no cloud API
+# clients or model-download packages belong in v0.
