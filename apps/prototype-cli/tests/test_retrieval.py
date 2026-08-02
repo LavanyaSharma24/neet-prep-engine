@@ -16,7 +16,10 @@ class RetrievalTests(unittest.TestCase):
         ids = {item["id"] for item in self.items}
         self.assertEqual(
             ids,
-            {"bio-0001", "bio-0002", "bio-0003", "bio-0004", "bio-0005"},
+            {
+                "bio-0001", "bio-0002", "bio-0003", "bio-0004", "bio-0005",
+                "bio-0006", "bio-0007", "bio-0008", "bio-0009",
+            },
         )
 
     def test_clear_match_returns_correct_item_with_high_confidence(self):
