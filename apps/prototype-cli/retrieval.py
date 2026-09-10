@@ -1,14 +1,19 @@
 """Fuzzy/keyword matching of a typed question against the local item bank.
 
-No LLM, no external API calls — stdlib only. v0 scope: NEET Biology, text only.
+No LLM, no external API calls — stdlib only. v0 scope: NEET Biology and
+Chemistry, text only.
 """
 import json
+import re
 import string
 from difflib import SequenceMatcher
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ITEM_BANK_GLOB = "item_bank/biology/*.jsonl"
+DEFAULT_ITEM_BANK_GLOBS = [
+    "item_bank/biology/*.jsonl",
+    "item_bank/chemistry/*.jsonl",
+]
 
 _STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "of", "in", "on", "at",
@@ -17,6 +22,27 @@ _STOPWORDS = {
     "this", "that", "these", "those", "it", "its", "with", "by", "term",
     "describes",
 }
+
+
+_MCQ_OPTION_RE = re.compile(r"(?<=[?\s])[A-Za-z0-9][).]")
+
+
+def _strip_mcq_options(text):
+    """Truncate trailing pasted MCQ options (e.g. 'A) ... B) ...') off a
+    typed question before it's used for matching.
+
+    Requires two *sequential* markers (A then B, 1 then 2, a then b, ...)
+    before truncating — a single marker isn't enough, since a lone
+    letter/digit + '.'/')' also occurs in ordinary text like decimal
+    numbers ("0.1 M HCl") or abbreviations.
+    """
+    matches = list(_MCQ_OPTION_RE.finditer(text))
+    for i, prev in enumerate(matches):
+        prev_char = prev.group()[0]
+        for curr in matches[i + 1:]:
+            if ord(curr.group()[0]) == ord(prev_char) + 1:
+                return text[:prev.start()]
+    return text
 
 
 def _normalize(text):
@@ -29,16 +55,29 @@ def _keywords(text):
     return {word for word in _normalize(text).split() if word and word not in _STOPWORDS}
 
 
-def load_items(glob_pattern=DEFAULT_ITEM_BANK_GLOB, root=REPO_ROOT):
-    """Load every item from *.jsonl files matching glob_pattern under root."""
+def load_items(glob_pattern=None, root=REPO_ROOT):
+    """Load every item from *.jsonl files matching glob_pattern(s) under root.
+
+    glob_pattern may be a single glob string (kept for backward compatibility)
+    or a list of glob strings. Defaults to DEFAULT_ITEM_BANK_GLOBS, covering
+    every subject folder.
+    """
+    if glob_pattern is None:
+        patterns = DEFAULT_ITEM_BANK_GLOBS
+    elif isinstance(glob_pattern, str):
+        patterns = [glob_pattern]
+    else:
+        patterns = glob_pattern
+
     items = []
-    for path in sorted(root.glob(glob_pattern)):
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                items.append(json.loads(line))
+    for pattern in patterns:
+        for path in sorted(root.glob(pattern)):
+            with path.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    items.append(json.loads(line))
     return items
 
 
@@ -86,6 +125,8 @@ def match(query, items=None):
         items = load_items()
     if not items or not query.strip():
         return None, 0.0
+
+    query = _strip_mcq_options(query)
 
     best_item, best_score = None, 0.0
     for item in items:
