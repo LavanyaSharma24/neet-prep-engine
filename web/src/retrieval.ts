@@ -19,6 +19,29 @@ const STOPWORDS = new Set([
 // Matches Python's string.punctuation.
 const PUNCTUATION_RE = /[!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~]/g;
 
+const MCQ_OPTION_RE = /(?<=[?\s])[A-Za-z0-9][).]/g;
+
+/**
+ * Truncate trailing pasted MCQ options (e.g. "A) ... B) ...") off a typed
+ * question before it's used for matching. Mirrors _strip_mcq_options in
+ * retrieval.py — requires two *sequential* markers (A then B, 1 then 2,
+ * ...) before truncating, so a single marker match (e.g. a decimal number
+ * like "0.1 M HCl") doesn't cause a false truncation.
+ */
+function stripMcqOptions(text: string): string {
+  const matches = Array.from(text.matchAll(MCQ_OPTION_RE));
+  for (let i = 0; i < matches.length; i++) {
+    const prevChar = matches[i][0][0];
+    for (let j = i + 1; j < matches.length; j++) {
+      const currChar = matches[j][0][0];
+      if (currChar.charCodeAt(0) === prevChar.charCodeAt(0) + 1) {
+        return text.slice(0, matches[i].index!);
+      }
+    }
+  }
+  return text;
+}
+
 function normalize(text: string): string {
   return text.toLowerCase().replace(PUNCTUATION_RE, "");
 }
@@ -161,10 +184,12 @@ export function match(query: string, items: Item[]): MatchResult {
     return { item: null, confidence: 0.0 };
   }
 
+  const strippedQuery = stripMcqOptions(query);
+
   let bestItem: Item | null = null;
   let bestScore = 0.0;
   for (const item of items) {
-    const s = score(query, item);
+    const s = score(strippedQuery, item);
     if (s > bestScore) {
       bestItem = item;
       bestScore = s;
