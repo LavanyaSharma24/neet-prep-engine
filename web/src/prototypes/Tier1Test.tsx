@@ -1,48 +1,21 @@
-// Standalone prototype — NOT wired into the real app.
+// Standalone diagnostic harness — NOT wired into the real app.
 //
-// Loads a small quantized instruction-tuned text2text model fully in the
-// browser (WASM, CPU) via transformers.js and uses it to rephrase a
-// verified item-bank answer in simpler words. The model is only ever told
-// to rewrite the text it is given — the prompt explicitly forbids adding
-// new facts, since this is a rephrasing aid, not an answer generator.
+// Exercises the shared Tier 1 on-device rephrasing logic (../tier1.ts,
+// also used by the real Simplify.tsx feature) with load/inference timing
+// visible, useful for testing model swaps and checking performance on
+// real devices.
 //
 // Deliberately does not import anything from ../App, ../api, ../types,
-// etc. This file (plus the tiny hook in main.tsx) is the entire footprint
-// of the experiment; delete both to remove it completely.
+// etc. — only ../tier1. This file (plus the tiny hook in main.tsx) is the
+// entire footprint of the experiment; delete both to remove it completely.
 import { useCallback, useRef, useState } from "react";
-
-// Swap to "Xenova/LaMini-Flan-T5-77M" (~40MB quantized) for a faster/lower
-// quality option when testing on slower phones.
-const MODEL_ID = "Xenova/LaMini-Flan-T5-248M";
+import { ensureTier1Pipeline, rephrase, MODEL_ID, type ProgressInfo, type Tier1Pipeline } from "../tier1";
 
 type Status = "idle" | "loading-model" | "ready" | "generating" | "error";
-
-interface ProgressInfo {
-  status: string;
-  file?: string;
-  progress?: number;
-}
-
-// Exported so it's independently testable without touching transformers.js.
-export function buildRephrasePrompt(verifiedAnswer: string): string {
-  return [
-    "Rewrite the following answer in simpler words for a student.",
-    "Do not add any new facts. Only simplify what is written.",
-    "",
-    `Answer: ${verifiedAnswer.trim()}`,
-    "",
-    "Simpler version:",
-  ].join("\n");
-}
 
 function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
-
-// The transformers.js pipeline instance is cached at module scope so
-// navigating away and back within the same tab session doesn't reload it.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let cachedPipeline: any = null;
 
 export default function Tier1Test() {
   const [status, setStatus] = useState<Status>("idle");
@@ -54,7 +27,7 @@ export default function Tier1Test() {
   const [loadMs, setLoadMs] = useState<number | null>(null);
   const [inferMs, setInferMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const pipelineRef = useRef<any>(cachedPipeline);
+  const pipelineRef = useRef<Tier1Pipeline | null>(null);
 
   const ensurePipeline = useCallback(async () => {
     if (pipelineRef.current) return pipelineRef.current;
@@ -63,22 +36,11 @@ export default function Tier1Test() {
     setError(null);
     const loadStart = performance.now();
 
-    const { pipeline, env } = await import("@xenova/transformers");
-    // Never try to resolve models from a local /models path.
-    env.allowLocalModels = false;
-    // Threaded WASM needs cross-origin-isolation headers this dev/preview
-    // server doesn't send; force single-threaded so it just works.
-    env.backends.onnx.wasm.numThreads = 1;
-
-    const pipe = await pipeline("text2text-generation", MODEL_ID, {
-      progress_callback: (info: ProgressInfo) => {
-        if (!info.file) return;
-        setProgressLines((prev) => ({ ...prev, [info.file as string]: info }));
-      },
+    const pipe = await ensureTier1Pipeline((info) => {
+      setProgressLines((prev) => ({ ...prev, [info.file as string]: info }));
     });
 
     pipelineRef.current = pipe;
-    cachedPipeline = pipe;
     setLoadMs(performance.now() - loadStart);
     setStatus("ready");
     return pipe;
@@ -92,13 +54,11 @@ export default function Tier1Test() {
       const pipe = await ensurePipeline();
       setStatus("generating");
 
-      const prompt = buildRephrasePrompt(inputText);
       const inferStart = performance.now();
-      const result = await pipe(prompt, { max_new_tokens: 128 });
+      const text = await rephrase(pipe, inputText);
       setInferMs(performance.now() - inferStart);
 
-      const text = Array.isArray(result) ? result[0]?.generated_text ?? "" : String(result);
-      setOutput(text.trim());
+      setOutput(text);
       setStatus("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

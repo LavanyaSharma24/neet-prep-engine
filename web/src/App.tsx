@@ -5,6 +5,7 @@ import { decide, CONFIDENCE_THRESHOLD } from "./refusal";
 import { escalateIfNeeded } from "./api";
 import { getCachedAnswer, putCachedAnswer } from "./answerCache";
 import { CheckCircleIcon, SparkleIcon, FlagIcon } from "./icons";
+import Simplify from "./Simplify";
 
 type Label =
   | "VERIFIED"
@@ -163,6 +164,7 @@ export default function App() {
                 {entry.label}
               </div>
               <div className="answer">{entry.answerText}</div>
+              {state === "verified" && <Simplify answerText={entry.answerText} />}
               <div className="meta">
                 confidence: {entry.confidence.toFixed(2)}
                 {entry.source ? ` · source: ${entry.source}` : ""}
