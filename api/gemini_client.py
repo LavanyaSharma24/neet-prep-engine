@@ -4,13 +4,29 @@ questions. Reads GEMINI_API_KEY from the environment (see .env.example).
 Grounds answers to NEET syllabus content and instructs the model to say so
 — never guess — when it isn't confident, matching the non-negotiable in
 docs/architecture.md §6 ("no confident wrong answers").
+
+Tier 2 cross-check (docs/architecture.md §1/§3): two independently-called
+models must substantively agree before an answer is served as
+"AI-generated, pending verification". The original design intent was a
+genuine cross-tier pair (Flash + Pro); the current API key has zero
+free-tier quota for any Pro-class model (verified directly against the
+Gemini API, not assumed — see docs/architecture.md decision log), so both
+models here are same-family Flash variants until billing unlocks Pro.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from google import genai
 from google.genai import types
 
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+# Both default to the two models confirmed working against this project's
+# actual API key (direct generateContent calls, not just listed as
+# available — see docs/architecture.md decision log). Every gemini-2.5-*
+# model and any Pro-class model 404s/429s on this key; do not reintroduce
+# them as defaults without re-verifying against the live API first.
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+SECONDARY_MODEL = os.environ.get("GEMINI_SECONDARY_MODEL", "gemini-flash-lite-latest")
 
 REFUSAL_TEXT = "I don't have a confident answer."
 
@@ -19,6 +35,14 @@ SYSTEM_PROMPT = (
     "only. Ground every answer in standard NCERT syllabus content. If you are "
     f"not confident in a correct, precise answer, respond exactly with: "
     f"\"{REFUSAL_TEXT}\" Do not guess or invent facts."
+)
+
+_JUDGE_SYSTEM_PROMPT = (
+    "You are checking whether two candidate answers to the same exam "
+    "question substantively agree on the facts — wording differences don't "
+    "matter, only whether the underlying claims match. Respond with exactly "
+    "one word: YES if they agree, NO if they contradict each other or "
+    "differ on a material fact."
 )
 
 
@@ -34,6 +58,18 @@ class GeminiRefusal(GeminiError):
     flagged_items.db treatment (a decline isn't reviewable content)."""
 
 
+@dataclass(frozen=True)
+class CrossCheckResult:
+    """Outcome of asking both Tier 2 models independently. `agreed` gates
+    whether an answer is servable at all — see docs/architecture.md's
+    cross-check rule: disagreement means neither answer is served, not
+    "pick one and hope"."""
+
+    agreed: bool
+    primary_answer: str
+    secondary_answer: str
+
+
 def _client() -> genai.Client:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -41,22 +77,91 @@ def _client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
-def ask_gemini(question: str) -> str:
+def ask_gemini(question: str, model_name: str = PRIMARY_MODEL) -> str:
     try:
         client = _client()
         response = client.models.generate_content(
-            model=MODEL_NAME,
+            model=model_name,
             contents=question,
             config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
         )
     except GeminiError:
         raise
     except Exception as exc:  # network/SDK errors — surface as a clean 502 upstream
-        raise GeminiError(f"Gemini request failed: {exc}") from exc
+        raise GeminiError(f"Gemini request failed ({model_name}): {exc}") from exc
 
     text = (response.text or "").strip()
     if not text:
-        raise GeminiError("Gemini returned an empty response")
+        raise GeminiError(f"Gemini returned an empty response ({model_name})")
     if text == REFUSAL_TEXT:
         raise GeminiRefusal(text)
     return text
+
+
+def _ask_judge(question: str, answer_a: str, answer_b: str) -> bool:
+    """Asks the (cheaper) secondary model whether two candidate answers
+    substantively agree. A judge failure fails closed — treated as
+    disagreement, never as a silent agreement — since serving an unverified
+    answer is the one outcome the architecture doc rules out entirely."""
+    prompt = (
+        f"Question: {question.strip()}\n\n"
+        f"Answer A: {answer_a.strip()}\n\n"
+        f"Answer B: {answer_b.strip()}\n\n"
+        "Do these substantively agree?"
+    )
+    try:
+        client = _client()
+        response = client.models.generate_content(
+            model=SECONDARY_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=_JUDGE_SYSTEM_PROMPT),
+        )
+    except Exception:
+        return False
+
+    verdict = (response.text or "").strip().upper()
+    return verdict == "YES"
+
+
+def cross_check_answer(question: str) -> CrossCheckResult:
+    """Calls both Tier 2 models independently (in parallel, so total
+    latency stays ~1 round trip rather than 2+ sequential ones) and judges
+    whether their answers substantively agree.
+
+    Either model refusing (GeminiRefusal) is treated as an overall refusal
+    — there's nothing to cross-check if one side has no answer. Either
+    model failing outright (GeminiError) propagates as-is; a real failure
+    shouldn't be silently downgraded to "disagreement".
+
+    Both futures are always awaited before anything is raised — checking
+    primary's result and returning early would silently swallow a genuine
+    error on the secondary side if primary happened to merely refuse.
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        primary_future = pool.submit(ask_gemini, question, PRIMARY_MODEL)
+        secondary_future = pool.submit(ask_gemini, question, SECONDARY_MODEL)
+
+        primary_answer = primary_error = None
+        secondary_answer = secondary_error = None
+        try:
+            primary_answer = primary_future.result()
+        except GeminiError as exc:
+            primary_error = exc
+        try:
+            secondary_answer = secondary_future.result()
+        except GeminiError as exc:
+            secondary_error = exc
+
+    # A hard failure on either side takes priority over a mere refusal —
+    # it's more actionable and shouldn't be masked by the other side simply
+    # declining to answer.
+    for err in (primary_error, secondary_error):
+        if err is not None and not isinstance(err, GeminiRefusal):
+            raise err
+    if primary_error is not None or secondary_error is not None:
+        raise primary_error or secondary_error
+
+    agreed = _ask_judge(question, primary_answer, secondary_answer)
+    return CrossCheckResult(
+        agreed=agreed, primary_answer=primary_answer, secondary_answer=secondary_answer
+    )

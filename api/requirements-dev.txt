@@ -1,0 +1,6 @@
+# Test-only dependencies — not installed in the Docker image (Dockerfile
+# installs requirements.txt only). Run tests with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest
+-r requirements.txt
+pytest==8.3.3

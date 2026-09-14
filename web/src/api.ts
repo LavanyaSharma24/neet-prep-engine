@@ -14,12 +14,19 @@
  * diagnosable instead of silently indistinguishable from being offline.
  */
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
-const REQUEST_TIMEOUT_MS = 15000;
+// Tier 2 cross-check makes 2-3 sequential/parallel Gemini calls server-side
+// (see api/gemini_client.py's cross_check_answer) — one live measurement
+// came in at ~11s, leaving too little headroom at 15s. Bumped to 30s.
+const REQUEST_TIMEOUT_MS = 30000;
 
 export interface EscalateApiResponse {
   answer: string | null;
   label: string;
   refused: boolean;
+  // True when the backend's Tier 2 cross-check ran both models but they
+  // substantively disagreed (docs/architecture.md's cross-check rule) —
+  // distinct from `refused` (a model explicitly declining).
+  disagreed: boolean;
 }
 
 export type EscalationResult =
@@ -27,6 +34,7 @@ export type EscalationResult =
   | { status: "skipped-offline" }
   | { status: "ok"; answer: string }
   | { status: "refused" }
+  | { status: "disagreed" }
   | { status: "error"; error: string };
 
 class EscalateHttpError extends Error {}
@@ -70,6 +78,12 @@ export async function escalateIfNeeded(
   }
   try {
     const response = await escalate(question);
+    // Checked before the generic refused/no-answer fallback below so a
+    // disagreement is never misreported as "the model declined" — they're
+    // different reasons with the same "no answer served" outcome.
+    if (response.disagreed) {
+      return { status: "disagreed" };
+    }
     // Gemini correctly declining (out-of-domain question) is a successful
     // request, not an error — but it's not an answer either. Report it as
     // its own status so the UI shows the honest refusal, not a fabricated
