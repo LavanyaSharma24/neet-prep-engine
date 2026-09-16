@@ -5,9 +5,25 @@ _client()/ask_gemini()/_ask_judge() are monkeypatched directly so these
 run offline and deterministically.
 """
 import pytest
+from google.genai import errors
 
 import gemini_client
 from gemini_client import CrossCheckResult, GeminiError, GeminiRefusal, ask_gemini
+
+
+def _server_error(code: int) -> errors.ServerError:
+    """Builds a real ServerError without a fake HTTP response — APIError's
+    normal __init__ parses one, so we bypass it and set just the .code
+    attribute ask_gemini's retry check reads."""
+    exc = errors.ServerError.__new__(errors.ServerError)
+    exc.code = code
+    return exc
+
+
+def _client_error(code: int) -> errors.ClientError:
+    exc = errors.ClientError.__new__(errors.ClientError)
+    exc.code = code
+    return exc
 
 
 class _FakeResponse:
@@ -49,6 +65,52 @@ def test_ask_gemini_raises_error_on_empty_response(monkeypatch):
     monkeypatch.setattr(gemini_client, "_client", lambda: _fake_client(""))
     with pytest.raises(GeminiError):
         ask_gemini("What is X?", model_name="any-model")
+
+
+def test_ask_gemini_retries_503_then_succeeds(monkeypatch):
+    calls = {"n": 0}
+
+    class _Models:
+        def generate_content(self, model, contents, config):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise _server_error(503)
+            return _FakeResponse("An answer after retries.")
+
+    class _Client:
+        models = _Models()
+
+    sleeps = []
+    monkeypatch.setattr(gemini_client, "_client", lambda: _Client())
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: sleeps.append(s))
+
+    result = ask_gemini("What is X?", model_name="any-model")
+
+    assert result == "An answer after retries."
+    assert calls["n"] == 3
+    assert sleeps == [1, 2]
+
+
+def test_ask_gemini_does_not_retry_429(monkeypatch):
+    calls = {"n": 0}
+
+    class _Models:
+        def generate_content(self, model, contents, config):
+            calls["n"] += 1
+            raise _client_error(429)
+
+    class _Client:
+        models = _Models()
+
+    sleeps = []
+    monkeypatch.setattr(gemini_client, "_client", lambda: _Client())
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: sleeps.append(s))
+
+    with pytest.raises(GeminiError):
+        ask_gemini("What is X?", model_name="any-model")
+
+    assert calls["n"] == 1
+    assert sleeps == []
 
 
 # --- _ask_judge ----------------------------------------------------------

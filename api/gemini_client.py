@@ -14,11 +14,12 @@ Gemini API, not assumed — see docs/architecture.md decision log), so both
 models here are same-family Flash variants until billing unlocks Pro.
 """
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 # Both default to the two models confirmed working against this project's
 # actual API key (direct generateContent calls, not just listed as
@@ -44,6 +45,13 @@ _JUDGE_SYSTEM_PROMPT = (
     "one word: YES if they agree, NO if they contradict each other or "
     "differ on a material fact."
 )
+
+# 503 UNAVAILABLE is Gemini's transient "high demand" response — worth a
+# quick retry. 429 (quota exhaustion) is a hard cap that won't clear in
+# seconds, so it deliberately is NOT retried here — retrying it would just
+# burn more of a quota that's already at zero.
+MAX_503_RETRIES = 2
+RETRY_BACKOFF_SECONDS = (1, 2)
 
 
 class GeminiError(RuntimeError):
@@ -77,18 +85,29 @@ def _client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
-def ask_gemini(question: str, model_name: str = PRIMARY_MODEL) -> str:
-    try:
-        client = _client()
-        response = client.models.generate_content(
-            model=model_name,
-            contents=question,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-        )
-    except GeminiError:
-        raise
-    except Exception as exc:  # network/SDK errors — surface as a clean 502 upstream
-        raise GeminiError(f"Gemini request failed ({model_name}): {exc}") from exc
+def ask_gemini(
+    question: str, model_name: str = PRIMARY_MODEL, system_prompt: str = SYSTEM_PROMPT
+) -> str:
+    attempt = 0
+    while True:
+        try:
+            client = _client()
+            response = client.models.generate_content(
+                model=model_name,
+                contents=question,
+                config=types.GenerateContentConfig(system_instruction=system_prompt),
+            )
+            break
+        except GeminiError:
+            raise
+        except errors.ServerError as exc:
+            if exc.code == 503 and attempt < MAX_503_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS[attempt])
+                attempt += 1
+                continue
+            raise GeminiError(f"Gemini request failed ({model_name}): {exc}") from exc
+        except Exception as exc:  # network/SDK errors — surface as a clean 502 upstream
+            raise GeminiError(f"Gemini request failed ({model_name}): {exc}") from exc
 
     text = (response.text or "").strip()
     if not text:
@@ -110,17 +129,13 @@ def _ask_judge(question: str, answer_a: str, answer_b: str) -> bool:
         "Do these substantively agree?"
     )
     try:
-        client = _client()
-        response = client.models.generate_content(
-            model=SECONDARY_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=_JUDGE_SYSTEM_PROMPT),
+        verdict = ask_gemini(
+            prompt, model_name=SECONDARY_MODEL, system_prompt=_JUDGE_SYSTEM_PROMPT
         )
     except Exception:
         return False
 
-    verdict = (response.text or "").strip().upper()
-    return verdict == "YES"
+    return verdict.strip().upper() == "YES"
 
 
 def cross_check_answer(question: str) -> CrossCheckResult:
