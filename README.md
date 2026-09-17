@@ -87,7 +87,7 @@ clearly unrelated question that should refuse.
   stages (v1+); empty for now.
 - `docs/` — `PRD.md`, `architecture.md`.
 
-## Web app + API (deployable, PWA + Cloud Run)
+## Web app + API (deployable, PWA + Render)
 
 A second, deployable v0 surface: the same Tier 0 matching/refusal logic as
 `apps/prototype-cli` (`web/src/retrieval.ts` / `refusal.ts` are direct
@@ -183,33 +183,34 @@ uvicorn main:app --reload --port 8000
 
 Verify: `curl http://localhost:8000/healthz` → `{"status":"ok"}`.
 
-### Deploy api/ to Cloud Run
+### Deploy api/ to Render
 
-Assumes `gcloud` is already authenticated and the project is already set
-(`gcloud config set project YOUR_PROJECT_ID`). Region `asia-south1`
-(Mumbai) matches the PRD's India-only v1 user base — change if you deploy
-elsewhere.
+Uses `render.yaml` (repo root) as a Blueprint — Render's declarative
+service config, checked into git so the deploy config is a diff, not a
+remembered set of dashboard clicks. `api/Dockerfile` needed no changes:
+it already binds `0.0.0.0` and reads its port from `$PORT`, which is
+exactly Render's convention too.
 
-```
-cd api
-gcloud run deploy neet-prep-api \
-  --source . \
-  --region asia-south1 \
-  --allow-unauthenticated \
-  --memory 512Mi \
-  --min-instances 0 \
-  --max-instances 3 \
-  --set-env-vars GEMINI_API_KEY=YOUR_GEMINI_API_KEY,ALLOWED_ORIGINS=https://YOUR-WEB-APP-URL
-```
+1. Push `render.yaml` to GitHub (already in this repo).
+2. In the Render dashboard: **New → Blueprint**, connect this GitHub repo.
+   Render detects `render.yaml` and shows the one service it defines
+   (`neet-prep-api`, Docker runtime, rooted at `api/`).
+3. It prompts for `GEMINI_API_KEY` (marked `sync: false` in the
+   Blueprint, so it's entered once in Render's dashboard, never written
+   to the YAML file or committed to git).
+4. Apply — Render builds the Dockerfile and deploys. It assigns a URL
+   like `https://neet-prep-api.onrender.com`; that's your API base URL.
 
-`--source .` builds the `Dockerfile` via Cloud Build and deploys in one
-step — no separate `gcloud builds submit`. `gcloud` prints a Service URL
-when it finishes; that's your API base URL. `ALLOWED_ORIGINS` is a
-comma-separated CORS allowlist — set it to the web app's real URL once you
-know it (loosen to `*` only while iterating). For anything beyond
-tonight's prototype, move `GEMINI_API_KEY` into Secret Manager
-(`--set-secrets` instead of `--set-env-vars`) rather than a plaintext env
-var.
+`render.yaml` already sets `ALLOWED_ORIGINS` to the live web app's real
+URL (`https://neet-prep-engine.web.app`) and pins `GEMINI_MODEL` /
+`GEMINI_SECONDARY_MODEL` to the two models confirmed working against a
+free-tier key (see `api/.env` comments). Region is `singapore` — closest
+of Render's regions to India's user base (same reasoning the old Cloud
+Run setup used `asia-south1`).
+
+Render's free tier has no persistent disk, so `flagged_items.db` (the
+Tier 3 review queue) resets on every deploy/restart — same limitation a
+default Cloud Run container would have; not Render-specific.
 
 Smoke test once deployed:
 
@@ -244,7 +245,8 @@ firebase deploy --only hosting
 ```
 
 Prints a `https://YOUR_PROJECT_ID.web.app` URL. Set that as
-`ALLOWED_ORIGINS` on the Cloud Run service (redeploy `api/` with the
-updated value, or `gcloud run services update`), and set it as
-`VITE_API_BASE_URL` in `web/.env.local` before your next `npm run build` +
-`firebase deploy` if you want escalation working from the deployed site.
+`ALLOWED_ORIGINS` on the Render service (edit the env var in Render's
+dashboard, which redeploys automatically), and set the Render service's
+own URL as `VITE_API_BASE_URL` in `web/.env.local` before your next
+`npm run build` + `firebase deploy` if you want escalation working from
+the deployed site.

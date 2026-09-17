@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: neet-prep-api
+    runtime: docker
+    rootDir: api
+    dockerfilePath: api/Dockerfile
+    dockerContext: api
+    plan: free
+    region: singapore
+    healthCheckPath: /healthz
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: GEMINI_SECONDARY_MODEL
+        value: gemini-flash-lite-latest
+      - key: ALLOWED_ORIGINS
+        value: https://neet-prep-engine.web.app
