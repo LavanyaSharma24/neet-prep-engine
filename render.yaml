@@ -3,8 +3,8 @@ services:
     name: neet-prep-api
     runtime: docker
     rootDir: api
-    dockerfilePath: api/Dockerfile
-    dockerContext: api
+    dockerfilePath: Dockerfile
+    dockerContext: .
     plan: free
     region: singapore
     healthCheckPath: /healthz
