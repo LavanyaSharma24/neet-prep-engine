@@ -144,7 +144,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>NEET Prep Engine</h1>
-        <p className="subtitle">v0 web prototype — NEET Biology &amp; Chemistry</p>
+        <p className="subtitle">NEET Biology &amp; Chemistry — verified answers, on-device AI, and cross-checked AI escalation</p>
       </header>
 
       {loadError && (
