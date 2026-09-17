@@ -15,6 +15,7 @@ web/node_modules/
 web/dist/
 web/.env.local
 web/public/item_bank.json
+web/public/diagrams/
 
 # api/ — local runtime output, never seeded/source data
 api/flagged_items.db

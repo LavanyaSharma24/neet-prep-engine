@@ -89,6 +89,10 @@
       "type": "string",
       "enum": ["en", "hi"],
       "description": "v0 is text-only English/Hindi. Hinglish and voice come in v1."
+    },
+    "diagram": {
+      "type": "string",
+      "description": "Optional filename of an SVG diagram for this item, e.g. 'chem-0025-pi-bond-overlap.svg'. Source lives in item_bank/diagrams/ and is copied to web/public/diagrams/ at build time (scripts/build_item_bank_json.py). Rendered inline in the web app only — the CLI has no image support and shows a text note instead. Omit entirely when no diagram exists for this item."
     }
   }
 }

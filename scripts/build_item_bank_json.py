@@ -6,9 +6,16 @@ single JSON array for the web app to fetch, and adds one derived field not
 present in schema.json: "subject", taken from the source folder name (e.g.
 "biology", "chemistry"), so the client can group/filter by subject.
 
+Also copies item_bank/diagrams/*.svg to web/public/diagrams/ — the SVGs an
+item's optional "diagram" field (schema.json) can reference. item_bank/ is
+the committed source of truth (diagrams reviewed alongside the items they
+illustrate); web/public/diagrams/ is a gitignored build artifact, exactly
+like web/public/item_bank.json.
+
 Run from anywhere; paths are resolved relative to the repo root.
 """
 import json
+import shutil
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +24,8 @@ SOURCE_GLOBS = [
     "item_bank/chemistry/*.jsonl",
 ]
 OUTPUT_PATH = REPO_ROOT / "web" / "public" / "item_bank.json"
+DIAGRAMS_SOURCE_DIR = REPO_ROOT / "item_bank" / "diagrams"
+DIAGRAMS_OUTPUT_DIR = REPO_ROOT / "web" / "public" / "diagrams"
 
 
 def load_source_files(root: Path = REPO_ROOT, globs=SOURCE_GLOBS) -> list[dict]:
@@ -43,6 +52,22 @@ def load_source_files(root: Path = REPO_ROOT, globs=SOURCE_GLOBS) -> list[dict]:
     return items
 
 
+def copy_diagrams(
+    source_dir: Path = DIAGRAMS_SOURCE_DIR, output_dir: Path = DIAGRAMS_OUTPUT_DIR
+) -> int:
+    """Copies every SVG from source_dir to output_dir. Missing source_dir
+    (no diagrams authored yet) is not an error — same "skip silently"
+    behavior as load_source_files has for a missing subject folder."""
+    if not source_dir.is_dir():
+        return 0
+    output_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for svg_path in sorted(source_dir.glob("*.svg")):
+        shutil.copyfile(svg_path, output_dir / svg_path.name)
+        count += 1
+    return count
+
+
 def build(output_path: Path = OUTPUT_PATH) -> list[dict]:
     items = load_source_files()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,3 +85,6 @@ if __name__ == "__main__":
     print(f"Wrote {len(built)} items to {OUTPUT_PATH}")
     for subject, count in sorted(by_subject.items()):
         print(f"  {subject}: {count}")
+
+    diagram_count = copy_diagrams()
+    print(f"Copied {diagram_count} diagram(s) to {DIAGRAMS_OUTPUT_DIR}")

@@ -91,6 +91,24 @@ build artifact (git-ignored), not hand-edited. Chemistry items are picked
 up automatically once `item_bank/chemistry/*.jsonl` exists; no code
 changes needed in `retrieval.ts`/`refusal.ts`, which are subject-agnostic.
 
+### Diagram support (web app only)
+
+An item can carry an optional `diagram` field (`item_bank/schema.json`) — a
+filename of an SVG under `item_bank/diagrams/`, copied to
+`web/public/diagrams/` by `build_item_bank_json.py`. The web app renders it
+inline next to the verified answer; the CLI has no image support and shows
+a one-line text note instead. Currently seeded on 3 items chosen because a
+diagram genuinely clarifies them:
+
+| Item | Diagram |
+| --- | --- |
+| `chem-0025` — pi (π) bond | ![Pi bond diagram](docs/screenshots/diagram-pi-bond.jpg) |
+| `chem-0015` — ethene sp² hybridization | ![Ethene sp2 hybridization diagram](docs/screenshots/diagram-ethene-hybridization.jpg) |
+| `bio-0001` — mitochondrion | ![Mitochondrion diagram](docs/screenshots/diagram-mitochondria.jpg) |
+
+Screenshots above are from the running web app (`docs/screenshots/`), not
+the raw SVGs — captured to visually confirm rendering during review.
+
 ### Run web/ locally
 
 ```

@@ -21,4 +21,6 @@ export interface Item {
   exam_tier: "NEET";
   language: "en" | "hi";
   subject: string;
+  /** Filename of an SVG under /diagrams/ (see item_bank/schema.json). Optional. */
+  diagram?: string;
 }

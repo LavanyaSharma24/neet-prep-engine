@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260" font-family="system-ui, sans-serif">
+  <rect x="1" y="1" width="398" height="258" rx="10" fill="#fafafa" stroke="#e5e7eb" stroke-width="2" />
+
+  <text x="200" y="26" text-anchor="middle" font-size="15" font-weight="600" fill="#111827">
+    Pi (π) Bond: Sideways Overlap of Parallel p Orbitals
+  </text>
+
+  <!-- Resultant pi-bond electron clouds, above and below the internuclear axis -->
+  <ellipse cx="200" cy="103" rx="140" ry="40" fill="#60a5fa" fill-opacity="0.55" stroke="#2563eb" stroke-width="1.5" />
+  <ellipse cx="200" cy="187" rx="140" ry="40" fill="#60a5fa" fill-opacity="0.55" stroke="#2563eb" stroke-width="1.5" />
+
+  <!-- Internuclear axis / sigma bond -->
+  <line x1="88" y1="145" x2="312" y2="145" stroke="#1f2937" stroke-width="2" />
+
+  <!-- Atoms -->
+  <circle cx="88" cy="145" r="10" fill="#374151" />
+  <text x="88" y="149" text-anchor="middle" font-size="11" fill="#ffffff" font-weight="600">C</text>
+  <circle cx="312" cy="145" r="10" fill="#374151" />
+  <text x="312" y="149" text-anchor="middle" font-size="11" fill="#ffffff" font-weight="600">C</text>
+
+  <text x="200" y="163" text-anchor="middle" font-size="11" fill="#4b5563">
+    σ bond — head-on overlap along the internuclear axis
+  </text>
+
+  <text x="200" y="55" text-anchor="middle" font-size="12" fill="#1e3a8a">
+    π bond — unhybridized p orbitals overlapping sideways
+  </text>
+  <text x="200" y="238" text-anchor="middle" font-size="12" fill="#1e3a8a">
+    electron density lies above and below the bond axis, not on it
+  </text>
+</svg>

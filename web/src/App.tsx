@@ -19,6 +19,7 @@ interface ChatEntry {
   answerText: string;
   confidence: number;
   source?: string;
+  diagram?: string;
 }
 
 function stateClass(label: Label): "verified" | "pending" | "flagged" {
@@ -76,6 +77,7 @@ export default function App() {
           answerText: decision.item.answer_text,
           confidence,
           source: decision.item.source,
+          diagram: decision.item.diagram,
         },
       ]);
       setBusy(false);
@@ -164,6 +166,13 @@ export default function App() {
                 {entry.label}
               </div>
               <div className="answer">{entry.answerText}</div>
+              {state === "verified" && entry.diagram && (
+                <img
+                  className="answer-diagram"
+                  src={`/diagrams/${entry.diagram}`}
+                  alt={`Diagram illustrating: ${entry.question}`}
+                />
+              )}
               {state === "verified" && <Simplify answerText={entry.answerText} />}
               <div className="meta">
                 confidence: {entry.confidence.toFixed(2)}

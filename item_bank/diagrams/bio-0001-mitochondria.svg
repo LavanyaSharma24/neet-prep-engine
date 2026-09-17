@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 380" font-family="system-ui, sans-serif">
+  <rect x="1" y="1" width="458" height="378" rx="10" fill="#fafafa" stroke="#e5e7eb" stroke-width="2" />
+
+  <text x="230" y="26" text-anchor="middle" font-size="15" font-weight="600" fill="#111827">
+    Mitochondrion — Cross Section
+  </text>
+
+  <!-- Outer membrane (also the intermembrane-space fill, showing through the gap) -->
+  <ellipse cx="230" cy="175" rx="150" ry="90" fill="#fff7ed" stroke="#9a3412" stroke-width="3" />
+
+  <!-- Inner membrane / matrix -->
+  <ellipse cx="230" cy="175" rx="127" ry="71" fill="#fde68a" stroke="#b45309" stroke-width="2.5" />
+
+  <!-- Cristae: inward folds of the inner membrane, projecting into the matrix -->
+  <g fill="#fff7ed" stroke="#b45309" stroke-width="2">
+    <rect x="-8" y="-33" width="16" height="66" rx="8" transform="translate(160,142) rotate(-20)" />
+    <rect x="-8" y="-36" width="16" height="72" rx="8" transform="translate(230,120) rotate(0)" />
+    <rect x="-8" y="-33" width="16" height="66" rx="8" transform="translate(300,142) rotate(20)" />
+    <rect x="-8" y="-33" width="16" height="66" rx="8" transform="translate(185,225) rotate(15)" />
+    <rect x="-8" y="-33" width="16" height="66" rx="8" transform="translate(275,225) rotate(-15)" />
+  </g>
+
+  <!-- Matrix label, in the clear band between the top and bottom cristae clusters -->
+  <text x="230" y="180" text-anchor="middle" font-size="12" fill="#78350f" font-weight="600">Matrix</text>
+
+  <!-- Cristae leader label: room on the right, so a direct leader line is safe -->
+  <line x1="315" y1="142" x2="400" y2="122" stroke="#6b7280" stroke-width="1" />
+  <text x="405" y="126" text-anchor="start" font-size="12" fill="#374151">Cristae</text>
+
+  <!-- Legend for the membrane layers, as a left-aligned column below the
+       diagram — avoids clipping that end-anchored leader-line labels hit
+       near the left edge for longer strings like "Intermembrane space". -->
+  <g font-size="12" fill="#374151">
+    <rect x="20" y="290" width="14" height="14" fill="#fff7ed" stroke="#9a3412" stroke-width="2" />
+    <text x="42" y="301">Outer membrane</text>
+
+    <rect x="20" y="313" width="14" height="14" fill="#fff7ed" stroke="#b45309" stroke-width="1.5" />
+    <text x="42" y="324">Intermembrane space — gap between outer and inner membrane</text>
+
+    <rect x="20" y="336" width="14" height="14" fill="#fde68a" stroke="#b45309" stroke-width="2" />
+    <text x="42" y="347">Inner membrane, folded inward as cristae, enclosing the matrix</text>
+  </g>
+
+  <text x="230" y="368" text-anchor="middle" font-size="11" fill="#6b7280">
+    Cristae fold inward from the inner membrane, increasing surface area for oxidative phosphorylation
+  </text>
+</svg>

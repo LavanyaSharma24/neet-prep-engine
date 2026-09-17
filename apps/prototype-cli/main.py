@@ -8,11 +8,14 @@ from retrieval import load_items, match
 
 def format_answer(result):
     item = result["item"]
-    return (
-        f"[VERIFIED] (confidence: {result['confidence']:.2f})\n"
-        f"{item['answer_text']}\n"
-        f"Source: {item['source']}"
-    )
+    lines = [
+        f"[VERIFIED] (confidence: {result['confidence']:.2f})",
+        item["answer_text"],
+        f"Source: {item['source']}",
+    ]
+    if item.get("diagram"):
+        lines.append("(A diagram is available for this item in the web app.)")
+    return "\n".join(lines)
 
 
 def format_refusal(result):
