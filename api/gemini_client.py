@@ -13,9 +13,11 @@ free-tier quota for any Pro-class model (verified directly against the
 Gemini API, not assumed — see docs/architecture.md decision log), so both
 models here are same-family Flash variants until billing unlocks Pro.
 """
+import contextvars
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 
 from google import genai
@@ -53,6 +55,23 @@ _JUDGE_SYSTEM_PROMPT = (
 MAX_503_RETRIES = 2
 RETRY_BACKOFF_SECONDS = (1, 2)
 
+# Without these, a stalled Gemini request hangs indefinitely (the SDK sets
+# no timeout by default) and web/src/api.ts aborts at 30s with no answer.
+# Per-request HTTP timeout for every Gemini call (both answers and the judge).
+CALL_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_CALL_TIMEOUT_SECONDS", "12"))
+# Overall budget for cross_check_answer, kept under the web client's 30s
+# abort so the server always responds (with a 502 if need be) first.
+CROSS_CHECK_DEADLINE_SECONDS = float(
+    os.environ.get("GEMINI_CROSS_CHECK_DEADLINE_SECONDS", "22")
+)
+
+# time.monotonic() deadline for the current cross-check, or None outside
+# one. A context var (copied into each worker thread) rather than a
+# parameter, so ask_gemini()/_client() keep their call signatures.
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "gemini_deadline", default=None
+)
+
 
 class GeminiError(RuntimeError):
     """Raised when the Gemini API call fails or is misconfigured."""
@@ -78,11 +97,26 @@ class CrossCheckResult:
     secondary_answer: str
 
 
+def _remaining_seconds() -> float | None:
+    deadline = _deadline.get()
+    return None if deadline is None else deadline - time.monotonic()
+
+
 def _client() -> genai.Client:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise GeminiError("GEMINI_API_KEY is not set")
-    return genai.Client(api_key=api_key)
+    timeout = CALL_TIMEOUT_SECONDS
+    remaining = _remaining_seconds()
+    if remaining is not None:
+        if remaining <= 0:
+            raise GeminiError("Gemini cross-check timed out")
+        timeout = min(timeout, remaining)
+    return genai.Client(
+        api_key=api_key,
+        # HttpOptions.timeout is in milliseconds (google-genai 1.2.0).
+        http_options=types.HttpOptions(timeout=max(1, int(timeout * 1000))),
+    )
 
 
 def ask_gemini(
@@ -102,7 +136,13 @@ def ask_gemini(
             raise
         except errors.ServerError as exc:
             if exc.code == 503 and attempt < MAX_503_RETRIES:
-                time.sleep(RETRY_BACKOFF_SECONDS[attempt])
+                backoff = RETRY_BACKOFF_SECONDS[attempt]
+                remaining = _remaining_seconds()
+                if remaining is not None and remaining <= backoff:
+                    raise GeminiError(
+                        f"Gemini request timed out ({model_name}): still 503 at the deadline"
+                    ) from exc
+                time.sleep(backoff)
                 attempt += 1
                 continue
             raise GeminiError(f"Gemini request failed ({model_name}): {exc}") from exc
@@ -151,32 +191,67 @@ def cross_check_answer(question: str) -> CrossCheckResult:
     Both futures are always awaited before anything is raised — checking
     primary's result and returning early would silently swallow a genuine
     error on the secondary side if primary happened to merely refuse.
+
+    The whole cross-check is bounded by CROSS_CHECK_DEADLINE_SECONDS: an
+    answer still outstanding at the deadline raises GeminiError (a 502
+    upstream), and a judge still outstanding fails closed as disagreement.
+    Stalled worker threads are abandoned rather than waited on; their own
+    HTTP timeout (capped at the time left) ends them shortly after.
     """
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        primary_future = pool.submit(ask_gemini, question, PRIMARY_MODEL)
-        secondary_future = pool.submit(ask_gemini, question, SECONDARY_MODEL)
+    deadline = time.monotonic() + CROSS_CHECK_DEADLINE_SECONDS
+    token = _deadline.set(deadline)
+
+    def submit(fn, *args):
+        # Each worker gets its own copy of the context so it sees _deadline.
+        return pool.submit(contextvars.copy_context().run, fn, *args)
+
+    def wait(future):
+        return future.result(timeout=max(0.0, deadline - time.monotonic()))
+
+    pool = ThreadPoolExecutor(max_workers=3)
+    try:
+        primary_future = submit(ask_gemini, question, PRIMARY_MODEL)
+        secondary_future = submit(ask_gemini, question, SECONDARY_MODEL)
 
         primary_answer = primary_error = None
         secondary_answer = secondary_error = None
         try:
-            primary_answer = primary_future.result()
+            primary_answer = wait(primary_future)
+        except FutureTimeoutError:
+            primary_error = GeminiError(
+                f"Gemini cross-check timed out after {CROSS_CHECK_DEADLINE_SECONDS:g}s "
+                f"waiting for {PRIMARY_MODEL}"
+            )
         except GeminiError as exc:
             primary_error = exc
         try:
-            secondary_answer = secondary_future.result()
+            secondary_answer = wait(secondary_future)
+        except FutureTimeoutError:
+            secondary_error = GeminiError(
+                f"Gemini cross-check timed out after {CROSS_CHECK_DEADLINE_SECONDS:g}s "
+                f"waiting for {SECONDARY_MODEL}"
+            )
         except GeminiError as exc:
             secondary_error = exc
 
-    # A hard failure on either side takes priority over a mere refusal —
-    # it's more actionable and shouldn't be masked by the other side simply
-    # declining to answer.
-    for err in (primary_error, secondary_error):
-        if err is not None and not isinstance(err, GeminiRefusal):
-            raise err
-    if primary_error is not None or secondary_error is not None:
-        raise primary_error or secondary_error
+        # A hard failure on either side takes priority over a mere refusal —
+        # it's more actionable and shouldn't be masked by the other side simply
+        # declining to answer.
+        for err in (primary_error, secondary_error):
+            if err is not None and not isinstance(err, GeminiRefusal):
+                raise err
+        if primary_error is not None or secondary_error is not None:
+            raise primary_error or secondary_error
 
-    agreed = _ask_judge(question, primary_answer, secondary_answer)
+        judge_future = submit(_ask_judge, question, primary_answer, secondary_answer)
+        try:
+            agreed = wait(judge_future)
+        except FutureTimeoutError:
+            agreed = False  # fails closed, same as any other judge failure
+    finally:
+        _deadline.reset(token)
+        pool.shutdown(wait=False, cancel_futures=True)
+
     return CrossCheckResult(
         agreed=agreed, primary_answer=primary_answer, secondary_answer=secondary_answer
     )

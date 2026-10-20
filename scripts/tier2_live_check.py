@@ -2,7 +2,7 @@
 
 Usage: python scripts/tier2_live_check.py https://<render-host>
 
-Standard library only. Makes at most 8 POST /escalate calls (each one costs
+Standard library only. Makes at most 3 POST /escalate calls (each one costs
 2-3 Gemini requests server-side), 3 seconds apart, and stops immediately on
 a 502 that mentions quota/429 rather than retrying. Needs no API key — the
 Gemini key lives only on the backend.
@@ -20,21 +20,19 @@ WARMUP_POLL_SECONDS = 5
 WARMUP_MAX_SECONDS = 120
 ESCALATE_TIMEOUT_SECONDS = 60
 ESCALATE_GAP_SECONDS = 3
-MAX_ESCALATE_CALLS = 8
+MAX_ESCALATE_CALLS = 3
 # web/src/api.ts aborts at REQUEST_TIMEOUT_MS = 30000; flag anything close.
 SLOW_FLAG_SECONDS = 25
 CLIENT_TIMEOUT_SECONDS = 30
 EXPECTED_LABEL = "AI-GENERATED — PENDING VERIFICATION"
 
-# (question, expected outcome). Fixed list — not tuned to force outcomes.
+# (question, expected outcome(s), "/"-separated). Fixed list — not tuned to
+# force outcomes. Kept to 3 to stay within the Gemini free-tier quota.
 QUESTIONS = [
     ("What is the function of ribosomes?", "ok"),
-    ("What is the role of the enzyme helicase in DNA replication?", "ok"),
-    ("Why does water have a higher boiling point than H2S?", "ok"),
-    ("How many net ATP molecules are produced per glucose molecule in aerobic respiration?", "disagreed"),
-    ("What is the bond order of the superoxide ion O2-?", "disagreed"),
     ("Who won the 2011 cricket world cup?", "refused"),
-    ("Write a short poem about the monsoon", "refused"),
+    # Textbook figure (36-38 vs. ~30-32) varies by source, so might disagree.
+    ("How many net ATP molecules are produced per glucose molecule in aerobic respiration?", "ok/disagreed"),
 ]
 
 
@@ -136,7 +134,7 @@ def escalation_checks(base):
             "seconds": seconds, "answer": None, "label": None, "detail": None,
         }
         if status is None:
-            row["actual"] = "timeout" if text.startswith("timeout") else "network-error"
+            row["actual"] = "client-timeout" if text.startswith("timeout") else "network-error"
             row["detail"] = text
         elif status == 200:
             try:
@@ -158,7 +156,8 @@ def escalation_checks(base):
             row["actual"] = str(status)
             row["detail"] = text[:300]
         rows.append(row)
-        print(f"  [{index + 1}/{len(QUESTIONS)}] {row['actual']} (HTTP {status}, {seconds:.1f}s) {question}")
+        http = f"HTTP {status}" if status is not None else row["actual"]
+        print(f"  [{index + 1}/{len(QUESTIONS)}] {row['actual']} ({http}, {seconds:.1f}s) {question}")
         if status is not None and is_quota_error(status, text):
             stopped_on_quota = True
             print("  STOPPING: 502 mentions quota/429 (free-tier limit). Not retrying.")
@@ -169,19 +168,19 @@ def escalation_checks(base):
 def print_table(rows):
     print("== e. Results ==")
     width = max(len(r["question"]) for r in rows)
-    header = f"{'question'.ljust(width)} | expected  | actual        | HTTP | seconds"
+    header = f"{'question'.ljust(width)} | expected     | actual         | HTTP           | seconds"
     print(header)
     print("-" * len(header))
     for r in rows:
-        match = "" if r["actual"] == r["expected"] else "  <-- differs from expected"
+        match = "" if r["actual"] in r["expected"].split("/") else "  <-- differs from expected"
         slow = ""
         if r["seconds"] > CLIENT_TIMEOUT_SECONDS:
             slow = f"  [SLOW: over the web client's {CLIENT_TIMEOUT_SECONDS}s abort]"
         elif r["seconds"] > SLOW_FLAG_SECONDS:
             slow = f"  [SLOW: over {SLOW_FLAG_SECONDS}s, client aborts at {CLIENT_TIMEOUT_SECONDS}s]"
         print(
-            f"{r['question'].ljust(width)} | {r['expected'].ljust(9)} | {r['actual'].ljust(13)} | "
-            f"{str(r['http']).ljust(4)} | {r['seconds']:.1f}{slow}{match}"
+            f"{r['question'].ljust(width)} | {r['expected'].ljust(12)} | {r['actual'].ljust(14)} | "
+            f"{str(r['http'] or r['actual']).ljust(14)} | {r['seconds']:.1f}{slow}{match}"
         )
     print()
     for r in rows:
@@ -227,8 +226,11 @@ def main():
     print(f"  cold start (this run): {cold_start:.1f}s")
     print(f"  escalation calls made: {len(rows)} of {len(QUESTIONS)} planned")
     print(f"  outcomes observed: {', '.join(observed)}")
+    print(f"  refused seen live: {'YES' if 'refused' in observed else 'NO'}")
     print(f"  disagreed seen live: {'YES' if 'disagreed' in observed else 'NO'}")
     print(f"  slowest call: {slowest['seconds']:.1f}s ({slowest['question']})")
+    over_slow = [r for r in rows if r["seconds"] > SLOW_FLAG_SECONDS]
+    print(f"  calls over {SLOW_FLAG_SECONDS}s: {len(over_slow)}")
     over = [r for r in rows if r["seconds"] > CLIENT_TIMEOUT_SECONDS]
     print(f"  calls over the client's {CLIENT_TIMEOUT_SECONDS}s timeout: {len(over)}")
     if stopped_on_quota:

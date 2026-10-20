@@ -4,6 +4,9 @@ No real Gemini API calls happen here — genai.Client is never constructed;
 _client()/ask_gemini()/_ask_judge() are monkeypatched directly so these
 run offline and deterministically.
 """
+import threading
+import time
+
 import pytest
 from google.genai import errors
 
@@ -209,3 +212,93 @@ def test_cross_check_both_error_raises(monkeypatch):
 
     with pytest.raises(GeminiError):
         gemini_client.cross_check_answer("Q")
+
+
+# --- timeouts / deadline --------------------------------------------------
+# Stalls are simulated with a threading.Event the stub blocks on; each test
+# sets it at the end so the abandoned worker thread exits promptly.
+
+
+def test_client_sets_per_call_timeout(monkeypatch):
+    captured = {}
+
+    def fake_client(api_key, http_options):
+        captured["timeout_ms"] = http_options.timeout
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemini_client.genai, "Client", fake_client)
+    monkeypatch.setattr(gemini_client, "CALL_TIMEOUT_SECONDS", 12)
+
+    gemini_client._client()
+
+    assert captured["timeout_ms"] == 12000
+
+
+def test_cross_check_stalled_primary_hits_deadline(monkeypatch):
+    release = threading.Event()
+
+    def fake(question, model_name):
+        if model_name == gemini_client.PRIMARY_MODEL:
+            release.wait(10)
+        return "An answer."
+
+    monkeypatch.setattr(gemini_client, "ask_gemini", fake)
+    monkeypatch.setattr(gemini_client, "CROSS_CHECK_DEADLINE_SECONDS", 0.5)
+
+    start = time.monotonic()
+    try:
+        with pytest.raises(GeminiError) as excinfo:
+            gemini_client.cross_check_answer("Q")
+        elapsed = time.monotonic() - start
+    finally:
+        release.set()
+
+    assert not isinstance(excinfo.value, GeminiRefusal)
+    assert "timed out" in str(excinfo.value)
+    assert elapsed < 2
+
+
+def test_cross_check_stalled_judge_fails_closed(monkeypatch):
+    release = threading.Event()
+
+    def stalled_judge(q, a, b):
+        release.wait(10)
+        return True  # would agree — must never be used past the deadline
+
+    _stub_ask_gemini(monkeypatch, primary="Answer A.", secondary="Answer B.")
+    monkeypatch.setattr(gemini_client, "_ask_judge", stalled_judge)
+    monkeypatch.setattr(gemini_client, "CROSS_CHECK_DEADLINE_SECONDS", 0.5)
+
+    start = time.monotonic()
+    try:
+        result = gemini_client.cross_check_answer("Q")
+        elapsed = time.monotonic() - start
+    finally:
+        release.set()
+
+    assert result.agreed is False
+    assert result.primary_answer == "Answer A."
+    assert elapsed < 2
+
+
+def test_ask_gemini_does_not_sleep_past_deadline(monkeypatch):
+    class _Models:
+        def generate_content(self, model, contents, config):
+            raise _server_error(503)
+
+    class _Client:
+        models = _Models()
+
+    sleeps = []
+    monkeypatch.setattr(gemini_client, "_client", lambda: _Client())
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: sleeps.append(s))
+    # 0.5s left is less than the first 1s backoff, so no retry is attempted.
+    token = gemini_client._deadline.set(time.monotonic() + 0.5)
+    try:
+        with pytest.raises(GeminiError) as excinfo:
+            ask_gemini("What is X?", model_name="any-model")
+    finally:
+        gemini_client._deadline.reset(token)
+
+    assert "timed out" in str(excinfo.value)
+    assert sleeps == []
