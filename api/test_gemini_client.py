@@ -8,6 +8,7 @@ import threading
 import time
 
 import pytest
+import requests
 from google.genai import errors
 
 import gemini_client
@@ -302,3 +303,110 @@ def test_ask_gemini_does_not_sleep_past_deadline(monkeypatch):
 
     assert "timed out" in str(excinfo.value)
     assert sleeps == []
+
+
+# --- read-timeout retries ---------------------------------------------------
+# google-genai 1.2.0 lets requests' ReadTimeout propagate unwrapped.
+
+
+def _read_timeout() -> requests.exceptions.ReadTimeout:
+    return requests.exceptions.ReadTimeout(
+        "HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out."
+    )
+
+
+def _scripted_client(monkeypatch, outcomes):
+    """Patches _client so each call returns a fresh fake client whose
+    generate_content yields the next outcome (an exception to raise or a
+    text to return). Returns a dict counting clients built and calls made."""
+    counts = {"clients": 0, "calls": 0}
+    outcomes = list(outcomes)
+
+    class _Models:
+        def generate_content(self, model, contents, config):
+            counts["calls"] += 1
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+    class _Client:
+        models = _Models()
+
+    def make():
+        counts["clients"] += 1
+        return _Client()
+
+    monkeypatch.setattr(gemini_client, "_client", make)
+    return counts
+
+
+def test_ask_gemini_retries_read_timeout_on_fresh_client(monkeypatch):
+    counts = _scripted_client(monkeypatch, [_read_timeout(), "An answer."])
+    sleeps = []
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: sleeps.append(s))
+
+    assert ask_gemini("What is X?", model_name="any-model") == "An answer."
+    assert counts == {"clients": 2, "calls": 2}
+    assert sleeps == []  # timeouts retry immediately, no backoff
+
+
+def test_ask_gemini_gives_up_after_two_read_timeouts(monkeypatch):
+    counts = _scripted_client(monkeypatch, [_read_timeout(), _read_timeout(), "never reached"])
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: pytest.fail("should not sleep"))
+
+    with pytest.raises(GeminiError) as excinfo:
+        ask_gemini("What is X?", model_name="any-model")
+
+    assert not isinstance(excinfo.value, GeminiRefusal)
+    assert "timed out" in str(excinfo.value)
+    assert counts["calls"] == 2
+
+
+def test_ask_gemini_503_then_timeout_then_success(monkeypatch):
+    counts = _scripted_client(monkeypatch, [_server_error(503), _read_timeout(), "An answer."])
+    sleeps = []
+    monkeypatch.setattr(gemini_client.time, "sleep", lambda s: sleeps.append(s))
+
+    assert ask_gemini("What is X?", model_name="any-model") == "An answer."
+    assert counts["calls"] == 3
+    assert sleeps == [1]  # only the 503 backs off
+
+
+def test_timeout_retries_never_run_past_deadline(monkeypatch):
+    """Real _client() and ask_gemini(); only genai.Client is faked, and it
+    behaves like the real HTTP timeout: every request stalls for exactly the
+    timeout it was given, then raises ReadTimeout."""
+    attempts = []  # (start offset, timeout in seconds)
+    start = time.monotonic()
+
+    class _Models:
+        def __init__(self, timeout_s):
+            self.timeout_s = timeout_s
+
+        def generate_content(self, model, contents, config):
+            attempts.append((time.monotonic() - start, self.timeout_s))
+            time.sleep(self.timeout_s)
+            raise _read_timeout()
+
+    class _FakeGenaiClient:
+        def __init__(self, api_key, http_options):
+            self.models = _Models(http_options.timeout / 1000)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemini_client.genai, "Client", _FakeGenaiClient)
+    monkeypatch.setattr(gemini_client, "CALL_TIMEOUT_SECONDS", 0.6)
+    monkeypatch.setattr(gemini_client, "CROSS_CHECK_DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr(gemini_client, "MIN_ATTEMPT_SECONDS", 0.2)
+
+    with pytest.raises(GeminiError) as excinfo:
+        gemini_client.cross_check_answer("Q")
+    elapsed = time.monotonic() - start
+
+    assert "timed out" in str(excinfo.value)
+    assert elapsed < 1.5
+    # Each model got its first attempt plus a second one capped at the
+    # time left; no attempt was scheduled to end after the deadline.
+    assert len(attempts) == 4
+    for offset, timeout_s in attempts:
+        assert offset + timeout_s <= 1.0 + 0.05

@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 
+import requests
 from google import genai
 from google.genai import errors, types
 
@@ -29,9 +30,10 @@ from google.genai import errors, types
 # model and any Pro-class model 404s/429s on this key; do not reintroduce
 # them as defaults without re-verifying against the live API first.
 # The primary was gemini-flash-latest until 2026-10-21, when it returned
-# 503s and stalled past 60s on this key while gemini-3.5-flash answered in
-# ~5s; it's a pinned name, so it won't silently move like a -latest alias.
-PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+# 503s and stalled past 60s on this key, then briefly gemini-3.5-flash;
+# gemini-3.5-flash-lite is pinned (won't silently move like a -latest alias)
+# and answered in ~1.6s when timed directly.
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 SECONDARY_MODEL = os.environ.get("GEMINI_SECONDARY_MODEL", "gemini-flash-lite-latest")
 
 REFUSAL_TEXT = "I don't have a confident answer."
@@ -68,8 +70,16 @@ RETRY_BACKOFF_SECONDS = (1, 2)
 
 # Without these, a stalled Gemini request hangs indefinitely (the SDK sets
 # no timeout by default) and web/src/api.ts aborts at 30s with no answer.
-# Per-request HTTP timeout for every Gemini call (both answers and the judge).
-CALL_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_CALL_TIMEOUT_SECONDS", "15"))
+# Per-attempt HTTP timeout for every Gemini call (both answers and the judge).
+# Kept short: healthy calls finish in ~1-8s, while a stalled one on the free
+# tier tends to hang until the timeout, so a quick fresh retry beats waiting.
+CALL_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_CALL_TIMEOUT_SECONDS", "8"))
+# A timed-out attempt (requests' ReadTimeout/ConnectTimeout — google-genai
+# 1.2.0 doesn't wrap them) is retried once, immediately, on a new client.
+MAX_TIMEOUT_ATTEMPTS = 2
+# No attempt starts with less than this left before the deadline — it
+# couldn't realistically finish, so fail with "timed out" right away.
+MIN_ATTEMPT_SECONDS = 2.0
 # Overall budget for cross_check_answer, kept under the web client's 30s
 # abort so the server always responds (with a 502 if need be) first.
 CROSS_CHECK_DEADLINE_SECONDS = float(
@@ -120,7 +130,7 @@ def _client() -> genai.Client:
     timeout = CALL_TIMEOUT_SECONDS
     remaining = _remaining_seconds()
     if remaining is not None:
-        if remaining <= 0:
+        if remaining < MIN_ATTEMPT_SECONDS:
             raise GeminiError("Gemini cross-check timed out")
         timeout = min(timeout, remaining)
     return genai.Client(
@@ -133,7 +143,8 @@ def _client() -> genai.Client:
 def ask_gemini(
     question: str, model_name: str = PRIMARY_MODEL, system_prompt: str = SYSTEM_PROMPT
 ) -> str:
-    attempt = 0
+    attempt = 0  # 503 retries used
+    timeouts = 0
     while True:
         try:
             client = _client()
@@ -145,11 +156,18 @@ def ask_gemini(
             break
         except GeminiError:
             raise
+        except requests.exceptions.Timeout as exc:
+            timeouts += 1
+            if timeouts < MAX_TIMEOUT_ATTEMPTS:
+                continue  # _client() won't start it if too little time is left
+            raise GeminiError(
+                f"Gemini request timed out ({model_name}) after {timeouts} attempts: {exc}"
+            ) from exc
         except errors.ServerError as exc:
             if exc.code == 503 and attempt < MAX_503_RETRIES:
                 backoff = RETRY_BACKOFF_SECONDS[attempt]
                 remaining = _remaining_seconds()
-                if remaining is not None and remaining <= backoff:
+                if remaining is not None and remaining < backoff + MIN_ATTEMPT_SECONDS:
                     raise GeminiError(
                         f"Gemini request timed out ({model_name}): still 503 at the deadline"
                     ) from exc
