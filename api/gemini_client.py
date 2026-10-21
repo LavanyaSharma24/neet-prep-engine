@@ -28,7 +28,10 @@ from google.genai import errors, types
 # available — see docs/architecture.md decision log). Every gemini-2.5-*
 # model and any Pro-class model 404s/429s on this key; do not reintroduce
 # them as defaults without re-verifying against the live API first.
-PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# The primary was gemini-flash-latest until 2026-10-21, when it returned
+# 503s and stalled past 60s on this key while gemini-3.5-flash answered in
+# ~5s; it's a pinned name, so it won't silently move like a -latest alias.
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 SECONDARY_MODEL = os.environ.get("GEMINI_SECONDARY_MODEL", "gemini-flash-lite-latest")
 
 REFUSAL_TEXT = "I don't have a confident answer."
