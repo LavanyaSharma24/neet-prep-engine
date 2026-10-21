@@ -61,11 +61,11 @@ RETRY_BACKOFF_SECONDS = (1, 2)
 # Without these, a stalled Gemini request hangs indefinitely (the SDK sets
 # no timeout by default) and web/src/api.ts aborts at 30s with no answer.
 # Per-request HTTP timeout for every Gemini call (both answers and the judge).
-CALL_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_CALL_TIMEOUT_SECONDS", "12"))
+CALL_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_CALL_TIMEOUT_SECONDS", "15"))
 # Overall budget for cross_check_answer, kept under the web client's 30s
 # abort so the server always responds (with a 502 if need be) first.
 CROSS_CHECK_DEADLINE_SECONDS = float(
-    os.environ.get("GEMINI_CROSS_CHECK_DEADLINE_SECONDS", "22")
+    os.environ.get("GEMINI_CROSS_CHECK_DEADLINE_SECONDS", "25")
 )
 
 # time.monotonic() deadline for the current cross-check, or None outside

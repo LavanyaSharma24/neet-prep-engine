@@ -15,5 +15,9 @@ services:
         value: gemini-3.5-flash
       - key: GEMINI_SECONDARY_MODEL
         value: gemini-flash-lite-latest
+      - key: GEMINI_CALL_TIMEOUT_SECONDS
+        value: "15"
+      - key: GEMINI_CROSS_CHECK_DEADLINE_SECONDS
+        value: "25"
       - key: ALLOWED_ORIGINS
         value: https://neet-prep-engine.web.app

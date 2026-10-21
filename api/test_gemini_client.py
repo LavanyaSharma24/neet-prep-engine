@@ -227,11 +227,11 @@ def test_client_sets_per_call_timeout(monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(gemini_client.genai, "Client", fake_client)
-    monkeypatch.setattr(gemini_client, "CALL_TIMEOUT_SECONDS", 12)
+    monkeypatch.setattr(gemini_client, "CALL_TIMEOUT_SECONDS", 15)
 
     gemini_client._client()
 
-    assert captured["timeout_ms"] == 12000
+    assert captured["timeout_ms"] == 15000
 
 
 def test_cross_check_stalled_primary_hits_deadline(monkeypatch):
