@@ -4,9 +4,9 @@
  *
  * This is NOT the item bank and NOT a source of truth — it exists only to
  * avoid a repeat network call for a question this device has already asked
- * while online. The server-side flagged_items.db (api/db.py) remains the
- * permanent record of every escalation regardless of what this cache
- * evicts or loses.
+ * while online. The server-side flagged_questions table (api/db.py) remains
+ * the permanent record of every agreed or disagreed escalation regardless
+ * of what this cache evicts or loses.
  *
  * Browser storage quotas — especially iOS Safari, which aggressively clears
  * IndexedDB under storage pressure — can evict entries independently of the

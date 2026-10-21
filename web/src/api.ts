@@ -13,7 +13,7 @@
  * Every failure is logged to the console with its real cause so it's
  * diagnosable instead of silently indistinguishable from being offline.
  */
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 // Tier 2 cross-check makes 2-3 sequential/parallel Gemini calls server-side
 // (see api/gemini_client.py's cross_check_answer) — one live measurement
 // came in at ~11s, leaving too little headroom at 15s. Bumped to 30s.

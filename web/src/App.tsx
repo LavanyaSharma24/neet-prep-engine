@@ -2,8 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Item } from "./types";
 import { match } from "./retrieval";
 import { decide, CONFIDENCE_THRESHOLD } from "./refusal";
-import { escalateIfNeeded } from "./api";
+import { escalateIfNeeded, type EscalationResult } from "./api";
 import { getCachedAnswer, putCachedAnswer } from "./answerCache";
+import { enqueueFlag, flushFlags, type FlagReason } from "./flagQueue";
 import { CheckCircleIcon, SparkleIcon, FlagIcon } from "./icons";
 import Simplify from "./Simplify";
 
@@ -21,6 +22,14 @@ interface ChatEntry {
   source?: string;
   diagram?: string;
 }
+
+// Outcomes that end with no answer AND weren't recorded server-side get
+// queued for review. A disagreement is recorded by /escalate itself.
+const FLAG_REASONS: Partial<Record<EscalationResult["status"], FlagReason>> = {
+  refused: "model_refused",
+  "skipped-offline": "offline",
+  error: "api_error",
+};
 
 function stateClass(label: Label): "verified" | "pending" | "flagged" {
   if (label === "VERIFIED") return "verified";
@@ -52,6 +61,15 @@ export default function App() {
       })
       .then((data: Item[]) => setItems(data))
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  // Opportunistic sync of the offline flag queue — fire-and-forget, never
+  // blocks the UI.
+  useEffect(() => {
+    void flushFlags();
+    const onOnline = () => void flushFlags();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
   }, []);
 
   async function handleSubmit(e: FormEvent) {
@@ -111,6 +129,14 @@ export default function App() {
     }
 
     const escalation = await escalateIfNeeded(question, confidence, CONFIDENCE_THRESHOLD);
+
+    // Not awaited: queueing and syncing must never delay showing the result.
+    const reason = FLAG_REASONS[escalation.status];
+    const queued = reason ? enqueueFlag(question, reason) : Promise.resolve();
+    if (escalation.status === "ok" || escalation.status === "refused" || escalation.status === "disagreed") {
+      // The backend just answered, so it's reachable — sync anything queued.
+      void queued.then(flushFlags);
+    }
 
     if (escalation.status === "ok") {
       await putCachedAnswer(question, escalation.answer);
